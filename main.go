@@ -3,14 +3,16 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/StrongerSoftworks/image-tagger/imagetiler"
 )
 
 type OllavaRequest struct {
@@ -41,18 +43,38 @@ type ImageData struct {
 }
 
 const defaultOllamaURL = "http://localhost:11434/api/generate"
-const fileRoot = "D:/dev/github.com/alleistra/picture-website/public/images"
+const fileRoot = "images"
 const model = "llava:13b"
 
 func main() {
+	// Command line arguments
+	var imageListFilePath, outputPath string
+	var cropWidth, cropHeight int
+	var saveCropped bool
+	var isLocalImageSource bool
+
+	flag.StringVar(&imageListFilePath, "path", "", "Path to the image file or web URL")
+	flag.StringVar(&outputPath, "out", "out", "Path to save the tiled images")
+	flag.IntVar(&cropWidth, "width", 672, "Crop width (default: 672)")
+	flag.IntVar(&cropHeight, "height", 672, "Crop height (default: 672)")
+	flag.BoolVar(&saveCropped, "save", false, "Save cropped images (default: false). For debugging purposes. Images that are saved are not automatically deletd by image-tagger.")
+	flag.BoolVar(&isLocalImageSource, "local", false, "Specify if the source is a local (default: true)")
+	flag.Parse()
+
+	if imageListFilePath == "" {
+		fmt.Println("Error: Image path or URL must be provided.")
+		return
+	}
+
 	imageData := []ImageData{}
 	start := time.Now()
 
 	// read tags
 	tags := readTags("tags.txt")
+	prompt := fmt.Sprintf("List every vehicle part you see in this image of a vehicle as a comma separated list. Only include parts from this list: %s. If the part is not certain to be in the image then to not list that part. Only list part that are easily discernable in the image and it is certain that the part is in the image.", tags)
 
 	// read file list
-	file, err := os.Open("file_list.txt")
+	file, err := os.Open(imageListFilePath)
 	if err != nil {
 		fmt.Printf("Error opening file: %v\n", err)
 		return
@@ -64,30 +86,17 @@ func main() {
 		imagePath := scanner.Text()
 		fmt.Println(imagePath)
 
-		// Read the file into memory
-		imageBin, err := os.ReadFile(fmt.Sprintf("%s/%s", fileRoot, imagePath))
-		if err != nil {
-			log.Fatalf("Error reading image file: %v", err)
-		}
+		base64Images := imagetiler.MakeImageTiles(imagetiler.ImageTileOptions{
+			IsLocalImage: isLocalImageSource,
+			SaveCropped:  saveCropped,
+			ImagePath:    imagePath,
+			OutputDir:    outputPath,
+			CropWidth:    cropWidth,
+			CropHeight:   cropHeight})
 
-		// Encode the file data to base64
-		base64String := base64.StdEncoding.EncodeToString(imageBin)
+		imageTags := tagsFromCroppedImages(base64Images)
 
-		prompt := fmt.Sprintf("List every vehicle part you see in this image of a vehicle as a comma separated list. Only include parts from this list: %s. If the part is not certain to be in the image then to not list that part. Only list part that are easily discernable in the image and it is certain that the part is in the image.", tags)
-
-		req := OllavaRequest{
-			Model:  model,
-			Stream: false,
-			Prompt: prompt,
-			Images: []string{base64String},
-		}
-		resp, err := talkToOllama(defaultOllamaURL, req)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		fmt.Println(resp.Response)
-		imageData = append(imageData, ImageData{File: imagePath, Alt: "", Tags: strings.Split(resp.Response, ", ")})
+		imageData = append(imageData, ImageData{File: imagePath, Alt: "", Tags: imageTags})
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -184,6 +193,26 @@ func readTags(filePath string) string {
 		fmt.Printf("Error reading tags file: %v\n", err)
 	}
 
+	return tags
+}
+
+func tagsFromCroppedImages(prompt string, base64Images []string) []string {
+	tags := []string{}
+	for _, base64Image := range base64Images {
+		req := OllavaRequest{
+			Model:  model,
+			Stream: false,
+			Prompt: prompt,
+			Images: []string{base64Image},
+		}
+		resp, err := talkToOllama(defaultOllamaURL, req)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		fmt.Println(resp.Response)
+		tags = append(tags, strings.Split(resp.Response, ", ")...)
+	}
 	return tags
 }
 

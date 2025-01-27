@@ -1,1 +1,4 @@
 *.txt
+images
+out
+.DS_Store
