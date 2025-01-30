@@ -10,7 +10,10 @@
       "request": "launch",
       "mode": "auto",
       "program": "${workspaceFolder}",
-      "args": ["-path", "./images/file_list.txt", "-local", "-save"]
+      "args": ["-images_path", "./images/file_list.txt", "-tags_path", "./tags.txt", "-mode", "fit", "-local", "-save"],
+      "env": {
+        "OLLAMA_HOST": "http://localhost:11434"
+      }
     }
   ]
 }

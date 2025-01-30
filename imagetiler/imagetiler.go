@@ -9,26 +9,30 @@ import (
 	"image/png"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/chai2010/webp"
+	"github.com/disintegration/imaging"
 	"github.com/gen2brain/avif"
 	"golang.org/x/image/tiff"
 )
 
 type ImageTileOptions struct {
-	IsLocalImage bool
-	SaveCropped  bool
-	ImagePath    string
-	OutputDir    string
-	CropWidth    int
-	CropHeight   int
+	IsLocalImage   bool
+	MaxImagePixels int
+	SaveCropped    bool
+	ImagePath      string
+	OutputDir      string
+	Width          int
+	Height         int
+	Mode           string
 }
 
-func MakeImageTiles(options ImageTileOptions) []string {
+func MakeImageTiles(options ImageTileOptions) [][]byte {
 	// Load the image
 	var img image.Image
 	var err error
@@ -42,21 +46,51 @@ func MakeImageTiles(options ImageTileOptions) []string {
 		return nil
 	}
 
-	// Crop the image
-	croppedImages := cropImage(img, options.CropWidth, options.CropHeight)
+	// Resize image if it goes beyond the configured max size
+	img = resizeImage(img, options)
 
-	var base64images []string = make([]string, len(croppedImages))
+	// Crop the image
+	croppedImages := cropImage(img, options.Width, options.Height)
+
+	var imageData [][]byte = make([][]byte, len(croppedImages))
 	// Save or process the cropped images
 	for i, cropped := range croppedImages {
 		if options.SaveCropped {
 			saveCroppedImage(cropped, options.ImagePath, options.OutputDir, i)
 		}
 
-		// Base64 encode the cropped image
-		base64images[i] = encodeImageToBase64(cropped)
+		buf := new(bytes.Buffer)
+		err := png.Encode(buf, cropped)
+		if err != nil {
+			log.Fatalf("Error encoding image: %v\n", err)
+			return nil
+		}
+		imageData[i] = buf.Bytes()
 	}
 
-	return base64images
+	return imageData
+}
+
+func resizeImage(img image.Image, options ImageTileOptions) image.Image {
+	bounds := img.Bounds()
+	imgWidth := bounds.Dx()
+	imgHeight := bounds.Dy()
+
+	if options.Mode == "fit" {
+		fmt.Printf("Resizing image from %d x %d to %d x %d\n", imgWidth, imgHeight, options.Width, options.Height)
+		return imaging.Fit(img, options.Width, options.Height, imaging.Lanczos)
+	}
+
+	imgPixels := imgWidth * imgHeight
+	if imgPixels > options.MaxImagePixels {
+		ratio := float64(imgWidth) / float64(imgHeight)
+		scale := math.Sqrt(float64(imgPixels) / float64(options.MaxImagePixels))
+		newHeight := int(math.Floor(float64(imgHeight) / scale))
+		newWidth := int(math.Floor(ratio * float64(imgHeight) / scale))
+		fmt.Printf("Resizing image from %d x %d to %d x %d\n", imgWidth, imgHeight, newWidth, newHeight)
+		img = imaging.Fit(img, newWidth, newHeight, imaging.Lanczos)
+	}
+	return img
 }
 
 func loadImageFromFile(filePath string) (image.Image, string, error) {
@@ -66,8 +100,7 @@ func loadImageFromFile(filePath string) (image.Image, string, error) {
 	}
 	defer file.Close()
 
-	return image.Decode(file)
-	// return decodeImage(bufio.NewReader(file))
+	return decodeImage(file)
 }
 
 func loadImageFromURL(url string) (image.Image, string, error) {
@@ -78,10 +111,10 @@ func loadImageFromURL(url string) (image.Image, string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("Error fetching image: HTTP %d\n", resp.StatusCode)
+		return nil, "", fmt.Errorf("error fetching image: HTTP %d", resp.StatusCode)
 	}
 
-	return image.Decode(resp.Body)
+	return decodeImage(resp.Body)
 }
 
 func decodeImage(reader io.Reader) (image.Image, string, error) {
@@ -125,8 +158,8 @@ func cropImage(img image.Image, cropWidth, cropHeight int) []image.Image {
 		return []image.Image{img}
 	}
 
-	heightStep := int(float64(cropHeight) * 0.667)
-	widthStep := int(float64(cropWidth) * 0.667)
+	heightStep := int(float64(cropHeight) * 0.5)
+	widthStep := int(float64(cropWidth) * 0.5)
 	var croppedImages []image.Image
 	for y := 0; y < imgHeight-heightStep; y += heightStep {
 		for x := 0; x < imgWidth-widthStep; x += widthStep {

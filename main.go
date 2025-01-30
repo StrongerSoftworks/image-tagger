@@ -2,39 +2,19 @@ package main
 
 import (
 	"bufio"
-	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/StrongerSoftworks/image-tagger/imagetiler"
+	"github.com/ollama/ollama/api"
 )
-
-type OllavaRequest struct {
-	Model  string   `json:"model"`
-	Prompt string   `json:"prompt"`
-	Stream bool     `json:"stream"`
-	Images []string `json:"images"`
-}
-
-type OllavaResponse struct {
-	Model              string    `json:"model"`
-	CreatedAt          time.Time `json:"created_at"`
-	Response           string    `json:"response"`
-	Done               bool      `json:"done"`
-	DoneReason         string    `json:"done_reason"`
-	TotalDuration      int64     `json:"total_duration"`
-	LoadDuration       int       `json:"load_duration"`
-	PromptEvalCount    int       `json:"prompt_eval_count"`
-	PromptEvalDuration int       `json:"prompt_eval_duration"`
-	EvalCount          int       `json:"eval_count"`
-	EvalDuration       int64     `json:"eval_duration"`
-}
 
 type ImageData struct {
 	File string   `json:"file"`
@@ -42,22 +22,25 @@ type ImageData struct {
 	Tags []string `json:"tags"`
 }
 
-const defaultOllamaURL = "http://localhost:11434/api/generate"
-const fileRoot = "images"
-const model = "llava:13b"
+const visionModel string = "llava:13b"      //"llava-llama3"
+const reasoningModel string = "llama3.2:3b" // TODO try mistral
 
 func main() {
 	// Command line arguments
-	var imageListFilePath, outputPath string
-	var cropWidth, cropHeight int
+	var imageListFilePath, tagsFilePath, outputPath string
+	var cropWidth, cropHeight, maxPixels int
+	var mode string
 	var saveCropped bool
 	var isLocalImageSource bool
 
-	flag.StringVar(&imageListFilePath, "path", "", "Path to the image file or web URL")
+	flag.StringVar(&imageListFilePath, "images_path", "", "Path to the file that contains a list of image file paths")
+	flag.StringVar(&tagsFilePath, "tags_path", "", "Path to the tags file")
 	flag.StringVar(&outputPath, "out", "out", "Path to save the tiled images")
 	flag.IntVar(&cropWidth, "width", 672, "Crop width (default: 672)")
 	flag.IntVar(&cropHeight, "height", 672, "Crop height (default: 672)")
-	flag.BoolVar(&saveCropped, "save", false, "Save cropped images (default: false). For debugging purposes. Images that are saved are not automatically deletd by image-tagger.")
+	flag.IntVar(&maxPixels, "max_pixels", 2000000, "Max pixels for source image. The source image will be resized if it is larger than configured max pixels (default: 2000000)")
+	flag.StringVar(&mode, "mode", "fit", "'fit' or 'tile'. 'fit' will resize the image to fit the given width and height. 'tile' will resize the image to fit the given max pixels then process the image in tiles defined by width and height. (default: fit)")
+	flag.BoolVar(&saveCropped, "save", false, "Save cropped images (default: false). For debugging purposes. Images that are saved are not automatically deleted by image-tagger.")
 	flag.BoolVar(&isLocalImageSource, "local", false, "Specify if the source is a local (default: true)")
 	flag.Parse()
 
@@ -66,12 +49,11 @@ func main() {
 		return
 	}
 
-	imageData := []ImageData{}
 	start := time.Now()
 
 	// read tags
-	tags := readTags("tags.txt")
-	prompt := fmt.Sprintf("List every vehicle part you see in this image of a vehicle as a comma separated list. Only include parts from this list: %s. If the part is not certain to be in the image then to not list that part. Only list part that are easily discernable in the image and it is certain that the part is in the image.", tags)
+	tags := readTags(tagsFilePath)
+	prompt := "Describe every part, component, control, feature or item in this photo. Only include items that are present and visible in the image. Ignore items that are not present or not visible in the image and do not include them in the description."
 
 	// read file list
 	file, err := os.Open(imageListFilePath)
@@ -86,88 +68,25 @@ func main() {
 		imagePath := scanner.Text()
 		fmt.Println(imagePath)
 
-		base64Images := imagetiler.MakeImageTiles(imagetiler.ImageTileOptions{
-			IsLocalImage: isLocalImageSource,
-			SaveCropped:  saveCropped,
-			ImagePath:    imagePath,
-			OutputDir:    outputPath,
-			CropWidth:    cropWidth,
-			CropHeight:   cropHeight})
+		images := imagetiler.MakeImageTiles(imagetiler.ImageTileOptions{
+			IsLocalImage:   isLocalImageSource,
+			SaveCropped:    saveCropped,
+			ImagePath:      imagePath,
+			OutputDir:      outputPath,
+			Width:          cropWidth,
+			Height:         cropHeight,
+			MaxImagePixels: maxPixels,
+			Mode:           mode,
+		})
 
-		imageTags := tagsFromCroppedImages(base64Images)
-
-		imageData = append(imageData, ImageData{File: imagePath, Alt: "", Tags: imageTags})
+		getImageTags(prompt, tags, images, imagePath)
 	}
 
 	if err := scanner.Err(); err != nil {
 		fmt.Printf("Error reading file: %v\n", err)
 	}
 
-	err = writeImageData(imageData)
-	if err != nil {
-		log.Fatalf("Did not complete writing data, exiting with error: %v", err)
-	}
-	err = writeAllTags(imageData)
-	if err != nil {
-		log.Fatalf("Did not complete writing tags, exiting with error: %v", err)
-	}
-
 	fmt.Printf("Completed in %v", time.Since(start))
-}
-
-func writeImageData(imageData []ImageData) error {
-	file, err := os.Create(fmt.Sprintf("%s/image_tags.json", fileRoot))
-	if err != nil {
-		fmt.Printf("Error creating file: %v\n", err)
-		return err
-	}
-	defer file.Close()
-
-	// Encode the slice to JSON and write it to the file
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ") // Optional: Pretty-print the JSON with indentation
-	if err := encoder.Encode(imageData); err != nil {
-		fmt.Printf("Error encoding to JSON: %v\n", err)
-		return err
-	}
-
-	fmt.Println("Data successfully written to image_tags.json")
-	return nil
-}
-
-func writeAllTags(imageData []ImageData) error {
-	// Collect all tags into a single string array
-	tagSet := make(map[string]struct{})
-	for _, data := range imageData {
-		for _, tag := range data.Tags {
-			tagSet[tag] = struct{}{} // Use a map to avoid duplicates
-		}
-	}
-
-	// Convert the map keys to a slice
-	allTags := make([]string, 0, len(tagSet))
-	for tag := range tagSet {
-		allTags = append(allTags, tag)
-	}
-
-	// Create the output file
-	file, err := os.Create(fmt.Sprintf("%s/all_tags.json", fileRoot))
-	if err != nil {
-		fmt.Printf("Error creating file: %v\n", err)
-		return err
-	}
-	defer file.Close()
-
-	// Encode the tags slice to JSON and write it to the file
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ") // Optional: Pretty-print the JSON with indentation
-	if err := encoder.Encode(allTags); err != nil {
-		fmt.Printf("Error encoding to JSON: %v\n", err)
-		return err
-	}
-
-	fmt.Println("Tags successfully written to all_tags.json")
-	return nil
 }
 
 func readTags(filePath string) string {
@@ -196,42 +115,64 @@ func readTags(filePath string) string {
 	return tags
 }
 
-func tagsFromCroppedImages(prompt string, base64Images []string) []string {
-	tags := []string{}
-	for _, base64Image := range base64Images {
-		req := OllavaRequest{
-			Model:  model,
-			Stream: false,
-			Prompt: prompt,
-			Images: []string{base64Image},
-		}
-		resp, err := talkToOllama(defaultOllamaURL, req)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		fmt.Println(resp.Response)
-		tags = append(tags, strings.Split(resp.Response, ", ")...)
+func getImageTags(prompt string, desiredTags string, images [][]byte, imageFile string) {
+	ollamaClient, err := api.ClientFromEnvironment()
+	if err != nil {
+		log.Fatal(err)
 	}
-	return tags
+
+	for i, imageData := range images {
+		sendVisionRequest(i, prompt, imageData, desiredTags, imageFile, ollamaClient)
+	}
 }
 
-func talkToOllama(url string, ollamaReq OllavaRequest) (*OllavaResponse, error) {
-	js, err := json.Marshal(&ollamaReq)
-	if err != nil {
-		return nil, err
+func sendVisionRequest(index int, prompt string, imageData []byte, desiredTags string, imageFile string, ollamaClient *api.Client) {
+	request := &api.GenerateRequest{
+		Model:  visionModel,
+		Prompt: prompt,
+		Stream: new(bool),
+		Images: []api.ImageData{imageData},
 	}
-	client := http.Client{}
-	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(js))
-	if err != nil {
-		return nil, err
+	responseHandler := func(response api.GenerateResponse) error {
+		fmt.Println(response.Response)
+		// send a chat request to get a list of tags from the description
+		return sendSummaryRequest(index, desiredTags, response.Response, imageFile, ollamaClient)
 	}
-	httpResp, err := client.Do(httpReq)
+	err := ollamaClient.Generate(context.Background(), request, responseHandler)
 	if err != nil {
-		return nil, err
+		log.Fatalf("Error sending generate request to ollama: %s", err)
 	}
-	defer httpResp.Body.Close()
-	ollamaResp := OllavaResponse{}
-	err = json.NewDecoder(httpResp.Body).Decode(&ollamaResp)
-	return &ollamaResp, err
+}
+
+func sendSummaryRequest(index int, desiredTags string, imageDescription string, imageFile string, ollamaClient *api.Client) error {
+	request := &api.GenerateRequest{
+		Model:  reasoningModel,
+		Prompt: fmt.Sprintf("Using this list: `%s`, extract and list only the items from the provided list that also are mentioned or described in the following content. Respond with a single comma-separated list of one or two-word phrases exactly as they appear in the provided list. No introductions, explanations, or extra text. Content: %s", desiredTags, imageDescription),
+		Stream: new(bool),
+	}
+	responseHandler := func(response api.GenerateResponse) error {
+		fmt.Println(response.Response)
+		tags := strings.Split(strings.ToLower(response.Response), ", ")
+
+		jsonData, err := json.Marshal(tags)
+		if err != nil {
+			log.Printf("Error marshaling tags to JSON: %v", err)
+			return err
+		}
+
+		// Write JSON to file with image name as prefix
+		jsonFileName := fmt.Sprintf("%s_%d_tags.json", imageFile[:len(imageFile)-len(filepath.Ext(imageFile))], index)
+		err = os.WriteFile(jsonFileName, jsonData, 0644)
+		if err != nil {
+			log.Printf("Error writing tags to file: %v", err)
+			return err
+		}
+		return nil
+	}
+	err := ollamaClient.Generate(context.Background(), request, responseHandler)
+	if err != nil {
+		log.Fatalf("Error sending generate request to ollama: %s", err)
+		return err
+	}
+	return nil
 }

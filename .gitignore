@@ -1,4 +1,6 @@
 *.txt
+*.exe
+*.json
 images
 out
 .DS_Store
