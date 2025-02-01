@@ -111,3 +111,15 @@ Bash
 ```
 find . -type f -exec realpath {} \; > file_list.txt
 ```
+
+Merge JSON files in a directory:
+
+```
+./scripts/merge_json.sh ./images
+```
+
+Extract tags from the merged JSON file:
+
+```
+./scripts/extract_tags.sh ./images
+```
