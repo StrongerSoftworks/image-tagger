@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,6 +21,11 @@ type ImageData struct {
 	File string   `json:"file"`
 	Alt  string   `json:"alt"`
 	Tags []string `json:"tags"`
+}
+
+type ImageSummary struct {
+	Tags    []string `json:"tags"`
+	Summary string   `json:"summary"`
 }
 
 var visionModel string
@@ -79,7 +85,9 @@ func main() {
 
 	// read tags
 	tags := readTagsFilter(tagsFilePath)
-	prompt := "Describe every part, component, control, feature or item in this photo. Only include items that are present and visible in the image. Ignore items that are not present or not visible in the image and do not include them in the description."
+	prompt := "Describe every part, feature or item in this photo. Only include items that are present and visible in the image. " +
+		"Ignore items that are only visible through glass and ignore items in the background." +
+		"Ignore items that are implied, visible in reflections, not present or not visible in the image and do not include them in the description."
 
 	// read file list
 	file, err := os.Open(imageListFilePath)
@@ -115,37 +123,37 @@ func main() {
 }
 
 // readTagsFilter reads the tags file and returns a string of tags
-func readTagsFilter(filePath string) string {
+func readTagsFilter(filePath string) []string {
 	// Open the file
 	file, err := os.Open(filePath)
 	if err != nil {
 		slog.Error("Error opening tags file", "error", err)
-		return ""
+		return []string{}
 	}
 	defer file.Close()
 
 	// Create a Scanner to read the file
-	scanner := bufio.NewScanner(file)
-
-	var tags string
-	// Read the first line from the file
-	if scanner.Scan() {
-		tags = scanner.Text()
-	}
-
-	// Check for errors during scanning
-	if err := scanner.Err(); err != nil {
+	var tags []string
+	fileContents, err := io.ReadAll(file)
+	if err != nil {
 		slog.Error("Error reading tags file", "error", err)
+		return []string{}
+	}
+	err = json.Unmarshal(fileContents, &tags)
+	if err != nil {
+		slog.Error("Error unmarshalling tags", "error", err)
+		return []string{}
 	}
 
 	return tags
 }
 
 // generateImageTags sends a generate request to the vision model running on the ollama client
-func generateImageTags(prompt string, desiredTags string, images [][]byte, imageFile string) {
+func generateImageTags(prompt string, desiredTags []string, images [][]byte, imageFile string) {
 	ollamaClient, err := api.ClientFromEnvironment()
 	if err != nil {
 		slog.Error("Error creating ollama client", "error", err)
+
 		return
 	}
 
@@ -155,7 +163,7 @@ func generateImageTags(prompt string, desiredTags string, images [][]byte, image
 }
 
 // sendVisionRequest sends a generate request to the vision model running on the ollama client
-func sendVisionRequest(index int, prompt string, imageData []byte, desiredTags string, imageFile string, ollamaClient *api.Client) {
+func sendVisionRequest(index int, prompt string, imageData []byte, desiredTags []string, imageFile string, ollamaClient *api.Client) {
 	request := &api.GenerateRequest{
 		Model:  visionModel,
 		Prompt: prompt,
@@ -163,7 +171,6 @@ func sendVisionRequest(index int, prompt string, imageData []byte, desiredTags s
 		Images: []api.ImageData{imageData},
 	}
 	responseHandler := func(response api.GenerateResponse) error {
-		slog.Debug("Vision response", "response", response.Response)
 		// send a chat request to get a list of tags from the description
 		return sendSummaryRequest(index, desiredTags, response.Response, imageFile, ollamaClient)
 	}
@@ -176,41 +183,54 @@ func sendVisionRequest(index int, prompt string, imageData []byte, desiredTags s
 }
 
 // sendSummaryRequest sends a generate request to the summary model running on the ollama client
-func sendSummaryRequest(index int, desiredTags string, imageDescription string, imageFilePath string, ollamaClient *api.Client) error {
+func sendSummaryRequest(index int, desiredTags []string, imageDescription string, imageFilePath string, ollamaClient *api.Client) error {
+	subject := "description of an image"
 	request := &api.GenerateRequest{
 		Model: summaryModel,
 		Prompt: fmt.Sprintf(
-			"Using this list: `%s`, extract and list only the items from the provided list "+
-				"that also are mentioned or described in the following content. Respond with a "+
-				"single comma-separated list of one or two-word phrases exactly as they appear "+
-				"in the provided list. On a second line include a summary of the content which is "+
-				"the description of an image and keep the summary to less than 18 words and summarize "+
-				"as if describing the subject of the image and use best practices for and img alt tag. "+
+			"Follow the instructions using this %s: %s. Using this list of tags: [`%s`], reduce the list of tags to a comma-separated list of the tags that are mentioned or described in the %s while not adding any new tags or changing the tags. "+
+				"Do not list tags that are not in the provided list of tags. Only use the provided tags when listing what is in the %s. "+
+				"Do not elaborate on the tags, just list the tag as it is in the provided list of tags if the tag fits the %s. "+
+				"Do not list tags that are implied, not visible, visible in reflections or not present in the %s."+
+				"Next include a summary of the %s and keep the summary to less than 18 words and summarize "+
+				"as if describing the subject of the image focusing on the subject and ignoring what's around the main subject and use best practices for an HTML img alt tag. "+
 				"No introductions, explanations, or extra text. "+
-				"Content: %s",
-			desiredTags, imageDescription),
+				"Respond using JSON.",
+			subject, imageDescription, strings.Join(desiredTags, ", "), subject, subject, subject, subject, subject),
 		Stream: new(bool),
+		Format: []byte(`{
+			"type": "object",
+			"properties": {
+				"tags": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"summary": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"tags",
+				"summary"
+			]
+		}`),
 	}
 	responseHandler := func(response api.GenerateResponse) error {
 		slog.Debug("Summary response", "response", response.Response)
-		lines := strings.Split(response.Response, "\n")
 
-		// verify multi line response
-		if len(lines) < 2 {
-			slog.Error("Summary response is not multi line", "response", response.Response)
-			return fmt.Errorf("summary response is not multi line")
-		}
-
-		tags := strings.Split(strings.ToLower(lines[0]), ", ")
-
-		for i, tag := range tags {
-			tags[i] = strings.TrimSpace(tag)
+		var imageSummary ImageSummary
+		err := json.Unmarshal([]byte(response.Response), &imageSummary)
+		if err != nil {
+			slog.Error("Error unmarshalling tags", "error", err)
+			return err
 		}
 
 		imageDataWithTags := ImageData{
 			File: filepath.Base(imageFilePath),
-			Alt:  strings.TrimSpace(lines[len(lines)-1]), // generate adds a blank line between the tags and the summary so take the last line
-			Tags: tags,
+			Alt:  imageSummary.Summary,
+			Tags: imageSummary.Tags,
 		}
 
 		jsonData, err := json.Marshal(imageDataWithTags)
@@ -229,6 +249,8 @@ func sendSummaryRequest(index int, desiredTags string, imageDescription string, 
 
 		return nil
 	}
+
+	slog.Debug("Sending summary request", "request", request.Prompt)
 	err := ollamaClient.Generate(context.Background(), request, responseHandler)
 	if err != nil {
 		slog.Error("Error sending generate request to ollama", "error", err)

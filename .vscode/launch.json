@@ -10,7 +10,7 @@
       "request": "launch",
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/taglist/main.go",
-      "args": ["-images_path", "${workspaceFolder}/images/file_list.txt", "-tags_path", "${workspaceFolder}/tags.txt", "-out", "${workspaceFolder}/out", "-mode", "fit", "-debug", "-save"],
+      "args": ["-images_path", "${workspaceFolder}/images/file_list.txt", "-tags_path", "${workspaceFolder}/tags.json", "-out", "${workspaceFolder}/out", "-mode", "fit", "-debug", "-save"],
       "env": {
         "OLLAMA_HOST": "http://localhost:11434"
       }

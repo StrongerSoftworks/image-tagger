@@ -29,7 +29,7 @@ go run cmd/taglist/main.go -help
 
 ```
 OLLAMA_HOST="http://localhost:11434"
-go run cmd/taglist/main.go -images_path images/file_list.txt -tags_path tags.txt -out out -mode fit -debug -save
+go run cmd/taglist/main.go -images_path images/file_list.txt -tags_path tags.json -out out -mode fit -debug -save
 ```
 
 ## Arguments:
