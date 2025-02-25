@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Output file
-INPUT_DIR="${1:-./images}"
+INPUT_DIR="${1:-./out}"
 OUTPUT_FILE="${INPUT_DIR}/image_metadata.json"
 
 # Check if jq is installed

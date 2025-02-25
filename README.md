@@ -88,7 +88,7 @@ OLLAMA_HOST="http://localhost:11434"
 
 A launch config for debugging is available in the .vscode folder.
 
-# Helpful Commands
+## Helpful Commands
 
 Creating link to local image dir:
 
@@ -123,3 +123,8 @@ Extract tags from the merged JSON file:
 ```
 ./scripts/extract_tags.sh ./images
 ```
+
+## Ollama Docs
+
+[API Docs](https://github.com/ollama/ollama/blob/main/docs/api.md)
+[Go API Examples](https://github.com/ollama/ollama/blob/main/api/examples/README.md)

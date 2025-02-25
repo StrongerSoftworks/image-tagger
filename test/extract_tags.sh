@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Directory containing JSON files
-INPUT_DIR="${1:-./images}"
+INPUT_DIR="${1:-./out}"
 # Output file
 OUTPUT_FILE="${INPUT_DIR}/all_tags.json"
 
@@ -18,7 +18,7 @@ if [ ! -d "$INPUT_DIR" ]; then
 fi
 
 # Extract "tags" from each JSON file, flatten the arrays, get unique values, and save to OUTPUT_FILE
-jq '[.[].tags[]] | unique' "$INPUT_DIR"/image_metadata.json > "$OUTPUT_FILE"
+jq '[.[].tags[].object] | unique' "$INPUT_DIR"/image_metadata.json > "$OUTPUT_FILE"
 
 # Confirmation message
 echo "Unique tags from JSON files in '$INPUT_DIR' have been saved to '$OUTPUT_FILE'."

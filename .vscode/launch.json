@@ -5,12 +5,23 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Launch Image Tagger, Debug Mode and Save Cropped Images",
+      "name": "debug fit mode",
       "type": "go",
       "request": "launch",
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/taglist/main.go",
-      "args": ["-images_path", "${workspaceFolder}/images/file_list.txt", "-tags_path", "${workspaceFolder}/tags.json", "-out", "${workspaceFolder}/out", "-mode", "fit", "-debug", "-save"],
+      "args": ["-image", "${workspaceFolder}/test/pexels-mikebirdy-244818.jpg", "-tags_path", "${workspaceFolder}/test/tags.json", "-out", "${workspaceFolder}/test/out", "-mode", "fit", "-debug", "-save"],
+      "env": {
+        "OLLAMA_HOST": "http://localhost:11434"
+      }
+    },
+    {
+      "name": "debug tile mode",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/taglist/main.go",
+      "args": ["-image", "${workspaceFolder}/test/pexels-mikebirdy-244818.jpg", "-tags_path", "${workspaceFolder}/test/tags.json", "-out", "${workspaceFolder}/test/out", "-mode", "tile", "-max_crops", "2", "-debug", "-save"],
       "env": {
         "OLLAMA_HOST": "http://localhost:11434"
       }

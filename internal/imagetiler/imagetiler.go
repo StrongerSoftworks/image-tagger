@@ -4,22 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	"image"
-	"image/jpeg"
 	"image/png"
-	"io"
 	"math"
-	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"log/slog"
 
-	"github.com/chai2010/webp"
 	"github.com/disintegration/imaging"
-	"github.com/gen2brain/avif"
-	"golang.org/x/image/tiff"
 )
 
 type Mode string
@@ -30,40 +23,45 @@ const (
 )
 
 type Options struct {
-	MaxImagePixels int
-	SaveCropped    bool
-	ImagePath      string
-	OutputDir      string
-	Width          int
-	Height         int
-	Mode           Mode
+	MaxCrops    int
+	CropSize    int
+	SaveCropped bool
+	ImagePath   string
+	OutputDir   string
+	Width       int
+	Height      int
+	Mode        Mode
 }
 
-func MakeImageTiles(options Options) [][]byte {
-	// Load the image
-	var img image.Image
-	var err error
-	if strings.HasPrefix(options.ImagePath, "http://") || strings.HasPrefix(options.ImagePath, "https://") {
-		img, _, err = loadImageFromURL(options.ImagePath)
-	} else if matched, _ := regexp.MatchString(`^\w+://`, options.ImagePath); matched {
-		slog.Error("Unknown protocol", "protocol", options.ImagePath)
-		return nil
-	} else {
-		img, _, err = loadImageFromFile(options.ImagePath)
+func MakeImageTiles(options Options, img image.Image) [][]byte {
+	bounds := img.Bounds()
+	imgWidth := bounds.Dx()
+	imgHeight := bounds.Dy()
+
+	slog.Debug("Resizing image", "from", fmt.Sprintf("%d x %d", imgWidth, imgHeight), "to", fmt.Sprintf("%d x %d", options.Width, options.Height))
+	resizedImage := imaging.Fit(img, options.Width, options.Height, imaging.Lanczos)
+
+	// crop mode
+	if options.Mode == ModeFit {
+		buf := new(bytes.Buffer)
+		err := png.Encode(buf, resizedImage)
+		if err != nil {
+			slog.Error("Error encoding image", "error", err)
+			return nil
+		}
+		return [][]byte{buf.Bytes()}
 	}
 
-	if err != nil {
-		slog.Error("Error loading image", "error", err)
-		return nil
-	}
-
-	// Resize image if it goes beyond the configured max size
-	img = resizeImage(img, options)
-
-	// Crop the image
+	// tile mode
+	maxSize := int(float64(options.CropSize) * math.Floor(math.Sqrt(float64(options.MaxCrops))) * 1.5)
+	slog.Debug("Resizing image", "from", fmt.Sprintf("%d x %d", imgWidth, imgHeight), "to", fmt.Sprintf("%d x %d", maxSize, maxSize))
+	img = imaging.Fit(img, maxSize, maxSize, imaging.Lanczos)
 	croppedImages := cropImage(img, options.Width, options.Height)
 
-	var imageData [][]byte = make([][]byte, len(croppedImages))
+	// always include the resized full image as the first image
+	croppedImages = append([]image.Image{resizedImage}, croppedImages...)
+
+	var imageData [][]byte = make([][]byte, len(croppedImages)+1)
 	// Save or process the cropped images
 	for i, cropped := range croppedImages {
 		if options.SaveCropped {
@@ -79,89 +77,8 @@ func MakeImageTiles(options Options) [][]byte {
 		imageData[i] = buf.Bytes()
 
 	}
-
 	return imageData
-}
 
-func resizeImage(img image.Image, options Options) image.Image {
-	bounds := img.Bounds()
-	imgWidth := bounds.Dx()
-	imgHeight := bounds.Dy()
-
-	if options.Mode == ModeFit {
-		slog.Debug("Resizing image", "from", fmt.Sprintf("%d x %d", imgWidth, imgHeight), "to", fmt.Sprintf("%d x %d", options.Width, options.Height))
-		return imaging.Fit(img, options.Width, options.Height, imaging.Lanczos)
-	}
-
-	imgPixels := imgWidth * imgHeight
-	if imgPixels > options.MaxImagePixels {
-		ratio := float64(imgWidth) / float64(imgHeight)
-		scale := math.Sqrt(float64(imgPixels) / float64(options.MaxImagePixels))
-		newHeight := int(math.Floor(float64(imgHeight) / scale))
-		newWidth := int(math.Floor(ratio * float64(imgHeight) / scale))
-		slog.Debug("Resizing image", "from", fmt.Sprintf("%d x %d", imgWidth, imgHeight), "to", fmt.Sprintf("%d x %d", newWidth, newHeight))
-		img = imaging.Fit(img, newWidth, newHeight, imaging.Lanczos)
-
-	}
-	return img
-}
-
-func loadImageFromFile(filePath string) (image.Image, string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		slog.Error("Error loading image from file", "error", err)
-		return nil, "", err
-	}
-	defer file.Close()
-
-	return decodeImage(file)
-}
-
-func loadImageFromURL(url string) (image.Image, string, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		slog.Error("Error fetching image from URL", "error", err)
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		slog.Error("Error fetching image from URL", "error", fmt.Errorf("error fetching image: HTTP %d", resp.StatusCode))
-		return nil, "", fmt.Errorf("error fetching image: HTTP %d", resp.StatusCode)
-	}
-
-	return decodeImage(resp.Body)
-}
-
-func decodeImage(reader io.Reader) (image.Image, string, error) {
-	// Detect format using the standard image package
-	img, format, err := image.Decode(reader)
-	if err == nil {
-		return img, format, nil
-	}
-
-	img, err = jpeg.Decode(reader)
-	if err == nil {
-		return img, "jpeg", nil
-	}
-
-	img, err = webp.Decode(reader)
-	if err == nil {
-		return img, "webp", nil
-	}
-
-	img, err = avif.Decode(reader)
-	if err == nil {
-		return img, "avif", nil
-	}
-
-	img, err = tiff.Decode(reader)
-	if err == nil {
-		return img, "tiff", nil
-	}
-
-	// If no decoder could handle the data, return an error
-	return nil, "", fmt.Errorf("unsupported image format or corrupted image")
 }
 
 func cropImage(img image.Image, cropWidth, cropHeight int) []image.Image {
