@@ -86,10 +86,20 @@ func main() {
 		return
 	}
 
+	// ensure outputPath exists
+	err := os.MkdirAll(outputPath, os.ModePerm)
+	if err != nil {
+		fmt.Println("Error creating output directory:", err)
+		return
+	}
+
 	start := time.Now()
 
 	// read tags
-	desiredTags := readTagsFilter(tagsFilePath)
+	var desiredTags []string
+	if tagsFilePath != "" {
+		desiredTags = readTagsFilter(tagsFilePath)
+	}
 
 	slog.Info("Processing image", "imagePath", imageFilePath)
 
