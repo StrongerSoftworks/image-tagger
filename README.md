@@ -20,10 +20,22 @@ git clone https://github.com/StrongerSoftworks/image-tagger.git
 cd image-tagger
 ```
 
+## Prerequisites
+
+Download and install Ollama:
+
+- https://ollama.com/download
+- https://formulae.brew.sh/formula/ollama
+
+Get the model:
+
+```
+ollama run llava:13b
+```
+
 ## Usage
 
 ```
-OLLAMA_HOST="http://localhost:11434"
 go run cmd/tag/main.go -help
 ```
 
