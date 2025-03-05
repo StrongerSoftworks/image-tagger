@@ -1,6 +1,6 @@
 # Image Tagger
 
-Image Tagger is a tool for tagging and getting summaries of the contents of images. It uses a vision multi model running on Ollama to generate the tags and summaries. The model it uses can be configured by command arguments.
+Image Tagger is a tool for tagging and getting summaries of the contents of images. It uses a vision multi model running on Ollama to generate the tags and summaries. The model it uses can be configured by command options.
 
 ## Table of Contents
 
@@ -32,8 +32,10 @@ OLLAMA_HOST="http://localhost:11434"
 go run cmd/tag/main.go -image image.png -tags_path tags.json -out out -mode fit -debug -save
 ```
 
-## Arguments:
+## Options:
 
+    -confidence int
+        Threshold for tag confidence. Any objects identified with a lower confidence than the configured confidence will not be saved. (default 50)
     -crop int
         Used with mode=tile. Crop width and height. Uses max_crops to create smaller images from the image and sending each image to the vision model (default: 512) (default 672)
     -debug

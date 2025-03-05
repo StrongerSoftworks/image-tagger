@@ -43,29 +43,29 @@ type VisionModelSummary struct {
 }
 
 var visionModel string
-
-const confidenceThreshold = 50
+var confidenceThreshold = 0
 
 func main() {
 	// Command line arguments
 	var imageFilePath, tagsFilePath, outputPath string
-	var cropSize, cropWidth, cropHeight int
+	var cropSize, resizeWidth, resizeHeight int
 	var mode string
 	var saveCropped bool
 	var debugMode bool
 	var help bool
 
-	flag.StringVar(&imageFilePath, "image", "", "Path to the image to process")
-	flag.StringVar(&tagsFilePath, "tags_path", "", "Path to the tags file")
-	flag.StringVar(&outputPath, "out", "out", "Path to save the tiled images")
-	flag.StringVar(&visionModel, "vision_model", "llava:13b", "Model to use for vision (default: llava:13b)")
-	flag.IntVar(&cropWidth, "width", 672, "Resize width (default: 672)")
-	flag.IntVar(&cropHeight, "height", 672, "Resize height (default: 672)")
-	flag.IntVar(&cropSize, "crop", 672, "Used with mode=tile. Crop width and height. Uses max_crops to create smaller images from the image and sending each image to the vision model (default: 512)")
+	flag.StringVar(&imageFilePath, "image", "", "Path to the image to process.")
+	flag.StringVar(&tagsFilePath, "tags_path", "", "Path to the tags file.")
+	flag.StringVar(&outputPath, "out", "out", "Path to save the tiled images.")
+	flag.StringVar(&visionModel, "vision_model", "llava:13b", "Model to use for vision.")
+	flag.IntVar(&confidenceThreshold, "confidence", 50, "Threshold for tag confidence. Any objects identified with a lower confidence than the configured confidence will not be saved.")
+	flag.IntVar(&resizeWidth, "width", 672, "Resize width. LLaVa supports 672x672, 336x1344, 1344x336 resolutions.")
+	flag.IntVar(&resizeHeight, "height", 672, "Resize height. LLaVa supports 672x672, 336x1344, 1344x336 resolutions.")
+	flag.IntVar(&cropSize, "crop", 672, "Used with mode=tile. Crop width and height. Uses max_crops to create smaller images from the image and sending each image to the vision model.")
 	flag.StringVar(&mode, "mode", "tile", "'fit' or 'tile'. 'fit' will resize the image to fit the given width and height. 'tile' will resize the image to fit \"crop\" x \"crop\" then process the image in 4 tiles with max width and height of \"crop\".")
 	flag.BoolVar(&saveCropped, "save", false, "Save cropped images. For debugging purposes. Images that are saved are not automatically deleted by image-tagger.")
-	flag.BoolVar(&debugMode, "debug", false, "Enable debug mode")
-	flag.BoolVar(&help, "help", false, "Show help")
+	flag.BoolVar(&debugMode, "debug", false, "Enable debug mode.")
+	flag.BoolVar(&help, "help", false, "Show help.")
 	flag.Parse()
 
 	if help {
@@ -97,8 +97,8 @@ func main() {
 		SaveCropped: saveCropped,
 		ImagePath:   imageFilePath,
 		OutputDir:   outputPath,
-		Width:       cropWidth,
-		Height:      cropHeight,
+		Width:       resizeWidth,
+		Height:      resizeHeight,
 		CropSize:    cropSize,
 		Mode:        imagetiler.Mode(mode),
 	}
@@ -177,13 +177,14 @@ func generateImageSummary(ollamaClient *api.Client, imagesData []api.ImageData) 
 	wg.Add(1)
 	go sendVisionSummaryRequest(ollamaClient, imagesData, &wg, results)
 
-	wg.Wait()
-	close(results)
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
 
 	return <-results
 }
 
-// generateImageTags sends a generate request to the vision model running on the ollama client
 func generateImageTags(ollamaClient *api.Client, imagesData []api.ImageData, subject string, desiredTags []string) []VisionModelTag {
 	var wg sync.WaitGroup
 	results := make(chan VisionModelTags, 1)
@@ -191,8 +192,10 @@ func generateImageTags(ollamaClient *api.Client, imagesData []api.ImageData, sub
 	wg.Add(1)
 	go sendVisionTagsRequest(ollamaClient, imagesData, subject, desiredTags, &wg, results)
 
-	wg.Wait()
-	close(results)
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
 
 	return collectUniqueTags(results)
 }
