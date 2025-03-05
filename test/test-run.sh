@@ -5,7 +5,7 @@ for file in ../images/*.jpg; do
     [ -e "$file" ] || continue  # Skip if no files match
     echo "Processing: $file"
     # Run the tag command
-    go run ../cmd/tag/main.go -image $file -tags_path tags.json -out out -mode tile -debug
+    go run ../cmd/tag/main.go -image $file -tags_path tags.json -out out -mode tile -passes 5 -debug
 done
 
 # Remove old JSON files
