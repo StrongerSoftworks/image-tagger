@@ -62,6 +62,8 @@ go run cmd/tag/main.go -image image.png -tags_path tags.json -out out -mode fit 
         'fit' or 'tile'. 'fit' will resize the image to fit the given width and height. 'tile' will resize the image to fit "crop" x "crop" then process the image in 4 tiles with max width and height of "crop". (default "tile")
     -out string
         Path to save the tiled images (default "out")
+    -passes int
+        How many times to collect tags from an image. Results from passes are combined to a single list of tags. (default 1)
     -save
         Save cropped images (default: false). For debugging purposes. Images that are saved are not automatically deleted by image-tagger.
     -tags_path string

@@ -47,17 +47,15 @@ var confidenceThreshold = 0
 
 func main() {
 	// Command line arguments
-	var imageFilePath, tagsFilePath, outputPath string
-	var cropSize, resizeWidth, resizeHeight int
-	var mode string
-	var saveCropped bool
-	var debugMode bool
-	var help bool
+	var mode, imageFilePath, tagsFilePath, outputPath string
+	var cropSize, resizeWidth, resizeHeight, passes int
+	var saveCropped, debugMode, help bool
 
 	flag.StringVar(&imageFilePath, "image", "", "Path to the image to process.")
 	flag.StringVar(&tagsFilePath, "tags_path", "", "Path to the tags file.")
 	flag.StringVar(&outputPath, "out", "out", "Path to save the tiled images.")
 	flag.StringVar(&visionModel, "vision_model", "llava:13b", "Model to use for vision.")
+	flag.IntVar(&passes, "passes", 1, "How many times to collect tags from an image. Results from passes are combined to a single list of tags.")
 	flag.IntVar(&confidenceThreshold, "confidence", 50, "Threshold for tag confidence. Any objects identified with a lower confidence than the configured confidence will not be saved.")
 	flag.IntVar(&resizeWidth, "width", 672, "Resize width. LLaVa supports 672x672, 336x1344, 1344x336 resolutions.")
 	flag.IntVar(&resizeHeight, "height", 672, "Resize height. LLaVa supports 672x672, 336x1344, 1344x336 resolutions.")
@@ -128,7 +126,7 @@ func main() {
 	}
 
 	summary := generateImageSummary(ollamaClient, imagesData)
-	summaryTags := generateImageTags(ollamaClient, imagesData, summary.Subject, desiredTags)
+	summaryTags := generateImageTags(ollamaClient, imagesData, summary.Subject, desiredTags, passes)
 	imageDataWithTags := ImageData{
 		File:        filepath.Base(imageFilePath),
 		Processed:   time.Now(),
@@ -187,25 +185,23 @@ func generateImageSummary(ollamaClient *api.Client, imagesData []api.ImageData) 
 	wg.Add(1)
 	go sendVisionSummaryRequest(ollamaClient, imagesData, &wg, results)
 
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
+	wg.Wait()
+	close(results)
 
 	return <-results
 }
 
-func generateImageTags(ollamaClient *api.Client, imagesData []api.ImageData, subject string, desiredTags []string) []VisionModelTag {
+func generateImageTags(ollamaClient *api.Client, imagesData []api.ImageData, subject string, desiredTags []string, passes int) []VisionModelTag {
 	var wg sync.WaitGroup
-	results := make(chan VisionModelTags, 1)
+	results := make(chan VisionModelTags, passes)
 
-	wg.Add(1)
-	go sendVisionTagsRequest(ollamaClient, imagesData, subject, desiredTags, &wg, results)
+	for i := 0; i < passes; i++ {
+		wg.Add(1)
+		go sendVisionTagsRequest(ollamaClient, imagesData, subject, desiredTags, &wg, results)
+	}
 
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
+	wg.Wait()
+	close(results)
 
 	return collectUniqueTags(results)
 }
