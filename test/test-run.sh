@@ -4,8 +4,8 @@
 for file in ../images/*.jpg; do
     [ -e "$file" ] || continue  # Skip if no files match
     echo "Processing: $file"
-    # Run the taglist command
-    go run ../cmd/taglist/main.go -image $file -tags_path tags.json -out out -mode fit -debug
+    # Run the tag command
+    go run ../cmd/tag/main.go -image $file -tags_path tags.json -out out -mode tile -debug
 done
 
 # Remove old JSON files

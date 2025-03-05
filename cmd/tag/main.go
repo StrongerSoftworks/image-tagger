@@ -44,31 +44,27 @@ type VisionModelSummary struct {
 
 var visionModel string
 
-// TODO try a merge model such as
-// https://ollama.com/library/llava-llama3 (Llama3 + LlaVa)
-
 const confidenceThreshold = 50
 
 func main() {
 	// Command line arguments
 	var imageFilePath, tagsFilePath, outputPath string
-	var cropSize, cropWidth, cropHeight, maxCrops int
+	var cropSize, cropWidth, cropHeight int
 	var mode string
 	var saveCropped bool
 	var debugMode bool
 	var help bool
 
-	flag.StringVar(&imageFilePath, "image", "", "Path to the file that contains a list of image file paths")
+	flag.StringVar(&imageFilePath, "image", "", "Path to the image to process")
 	flag.StringVar(&tagsFilePath, "tags_path", "", "Path to the tags file")
 	flag.StringVar(&outputPath, "out", "out", "Path to save the tiled images")
 	flag.StringVar(&visionModel, "vision_model", "llava:13b", "Model to use for vision (default: llava:13b)")
 	flag.IntVar(&cropWidth, "width", 672, "Resize width (default: 672)")
 	flag.IntVar(&cropHeight, "height", 672, "Resize height (default: 672)")
 	flag.IntVar(&cropSize, "crop", 672, "Used with mode=tile. Crop width and height. Uses max_crops to create smaller images from the image and sending each image to the vision model (default: 512)")
-	flag.IntVar(&maxCrops, "max_crops", 6, "Used with mode=tile. Max images to crop from the source image. The source image will be resized before cropping if it cannot be fully covered with size of cropped images. (default: 6)")
-	flag.StringVar(&mode, "mode", "fit", "'fit' or 'tile'. 'fit' will resize the image to fit the given width and height. 'tile' will resize the image to fit the given max pixels then process the image in tiles defined by width and height. (default: fit)")
-	flag.BoolVar(&saveCropped, "save", false, "Save cropped images (default: false). For debugging purposes. Images that are saved are not automatically deleted by image-tagger.")
-	flag.BoolVar(&debugMode, "debug", false, "Enable debug mode (default: false)")
+	flag.StringVar(&mode, "mode", "tile", "'fit' or 'tile'. 'fit' will resize the image to fit the given width and height. 'tile' will resize the image to fit \"crop\" x \"crop\" then process the image in 4 tiles with max width and height of \"crop\".")
+	flag.BoolVar(&saveCropped, "save", false, "Save cropped images. For debugging purposes. Images that are saved are not automatically deleted by image-tagger.")
+	flag.BoolVar(&debugMode, "debug", false, "Enable debug mode")
 	flag.BoolVar(&help, "help", false, "Show help")
 	flag.Parse()
 
@@ -89,11 +85,6 @@ func main() {
 		flag.PrintDefaults()
 		return
 	}
-	if tagsFilePath == "" {
-		fmt.Println("Tags file path must be provided.")
-		flag.PrintDefaults()
-		return
-	}
 
 	start := time.Now()
 
@@ -109,7 +100,6 @@ func main() {
 		Width:       cropWidth,
 		Height:      cropHeight,
 		CropSize:    cropSize,
-		MaxCrops:    maxCrops,
 		Mode:        imagetiler.Mode(mode),
 	}
 
@@ -122,8 +112,13 @@ func main() {
 		return
 	}
 
-	summary := generateImageSummary(ollamaClient, images[0])
-	summaryTags := generateImageTags(ollamaClient, images, summary.Subject, desiredTags)
+	var imagesData []api.ImageData = make([]api.ImageData, len(images))
+	for idx, image := range images {
+		imagesData[idx] = image
+	}
+
+	summary := generateImageSummary(ollamaClient, imagesData)
+	summaryTags := generateImageTags(ollamaClient, imagesData, summary.Subject, desiredTags)
 	imageDataWithTags := ImageData{
 		File:        filepath.Base(imageFilePath),
 		Processed:   time.Now(),
@@ -175,47 +170,45 @@ func readTagsFilter(filePath string) []string {
 	return tags
 }
 
-func generateImageSummary(ollamaClient *api.Client, imageData []byte) VisionModelSummary {
+func generateImageSummary(ollamaClient *api.Client, imagesData []api.ImageData) VisionModelSummary {
 	var wg sync.WaitGroup
 	results := make(chan VisionModelSummary, 1)
 
 	wg.Add(1)
-	go sendVisionSummaryRequest(ollamaClient, imageData, &wg, results)
+	go sendVisionSummaryRequest(ollamaClient, imagesData, &wg, results)
 
-	wg.Wait() // Wait for all goroutines to finish
+	wg.Wait()
 	close(results)
 
 	return <-results
 }
 
 // generateImageTags sends a generate request to the vision model running on the ollama client
-func generateImageTags(ollamaClient *api.Client, images [][]byte, subject string, desiredTags []string) []VisionModelTag {
+func generateImageTags(ollamaClient *api.Client, imagesData []api.ImageData, subject string, desiredTags []string) []VisionModelTag {
 	var wg sync.WaitGroup
-	results := make(chan VisionModelTags, len(images))
+	results := make(chan VisionModelTags, 1)
 
-	for _, imageData := range images {
-		wg.Add(1)
-		go sendVisionTagsRequest(ollamaClient, imageData, subject, desiredTags, &wg, results)
-	}
+	wg.Add(1)
+	go sendVisionTagsRequest(ollamaClient, imagesData, subject, desiredTags, &wg, results)
 
-	wg.Wait() // Wait for all goroutines to finish
+	wg.Wait()
 	close(results)
 
 	return collectUniqueTags(results)
 }
 
-func sendVisionSummaryRequest(ollamaClient *api.Client, imageData []byte, wg *sync.WaitGroup, summaries chan<- VisionModelSummary) {
-	prompt := "Analyze the provided image and provide: " +
-		"    subject: The main subject of the image as a single word. " +
-		"    description: A short description of the image no longer than 20 words. " +
-		"No introductions, explanations, or extra text. " +
-		"Respond using JSON."
+func sendVisionSummaryRequest(ollamaClient *api.Client, imagesData []api.ImageData, wg *sync.WaitGroup, summaries chan<- VisionModelSummary) {
+	prompt := "You are a professional SEO specialist. Analyze the provided image and provide:" +
+		"    subject: The main subject of the image as a single word. The subject can be an object or improper noun." +
+		"    description: A short description of the image no longer than 20 words." +
+		" No introductions, explanations, or extra text." +
+		" Respond using JSON."
 
 	request := &api.GenerateRequest{
 		Model:  visionModel,
 		Prompt: prompt,
 		Stream: new(bool),
-		Images: []api.ImageData{imageData},
+		Images: imagesData,
 		Format: []byte(`{
 			"type": "object",
 			"properties": {
@@ -252,21 +245,25 @@ func sendVisionSummaryRequest(ollamaClient *api.Client, imageData []byte, wg *sy
 }
 
 // sendVisionRequest sends a generate request to the vision model running on the ollama client
-func sendVisionTagsRequest(ollamaClient *api.Client, imageData []byte, subject string, desiredTags []string, wg *sync.WaitGroup, summaries chan<- VisionModelTags) {
-	prompt := fmt.Sprintf("Analyze the provided image of a %s and identify the objects from the following list: [%s]."+
-		"If an object is found, provide: "+
-		"    object: An object from the list of objects. "+
-		"    confidence: A confidence level number between 0 and 100 based on clarity, visibility, and similarity to known references. "+
-		// "Next include a summary of the description of an image and keep the summary to less than 20 words and summarize " +
-		// "as if describing the subject of the image focusing on the subject and ignoring what's around the main subject and use best practices for an HTML img alt tag. " +
-		"No introductions, explanations, or extra text. "+
-		"Respond using JSON.", subject, strings.Join(desiredTags, ", "))
+func sendVisionTagsRequest(ollamaClient *api.Client, imageData []api.ImageData, subject string, desiredTags []string, wg *sync.WaitGroup, summaries chan<- VisionModelTags) {
+	objectInstruction := "that are visible in the image"
+	if len(desiredTags) > 0 {
+		objectInstruction = fmt.Sprintf("from the following list: [%s]", strings.Join(desiredTags, ", "))
+	}
+	prompt := fmt.Sprintf("You are assembling a list of tags for a web application that will be used for browsing images and filtering images by tags."+
+		" Analyze the provided image of a %s and identify the objects %s."+
+		" If an object is found, provide: "+
+		"    object: An object from the list of objects."+
+		"    confidence: A confidence level number between 0 and 100 based on clarity, visibility, and similarity to known references."+
+		" The object should clearly be visible in the image and you must me confident that the object is correctly identified."+
+		" No introductions, explanations, or extra text."+
+		" Respond using JSON.", subject, objectInstruction)
 
 	request := &api.GenerateRequest{
 		Model:  visionModel,
 		Prompt: prompt,
 		Stream: new(bool),
-		Images: []api.ImageData{imageData},
+		Images: imageData,
 		Format: []byte(`{
 			"type": "object",
 			"properties": {

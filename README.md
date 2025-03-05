@@ -1,6 +1,6 @@
 # Image Tagger
 
-Image Tagger is a tool for tagging and getting summaries of the contents of images. It uses vision and text models running on Ollama to generate the tags and summaries. The models it uses can be configured by command arguments.
+Image Tagger is a tool for tagging and getting summaries of the contents of images. It uses a vision multi model running on Ollama to generate the tags and summaries. The model it uses can be configured by command arguments.
 
 ## Table of Contents
 
@@ -24,47 +24,45 @@ cd image-tagger
 
 ```
 OLLAMA_HOST="http://localhost:11434"
-go run cmd/taglist/main.go -help
+go run cmd/tag/main.go -help
 ```
 
 ```
 OLLAMA_HOST="http://localhost:11434"
-go run cmd/taglist/main.go -images_path images/file_list.txt -tags_path tags.json -out out -mode fit -debug -save
+go run cmd/tag/main.go -image image.png -tags_path tags.json -out out -mode fit -debug -save
 ```
 
 ## Arguments:
 
+    -crop int
+        Used with mode=tile. Crop width and height. Uses max_crops to create smaller images from the image and sending each image to the vision model (default: 512) (default 672)
     -debug
         Enable debug mode (default: false)
     -height int
-        Crop or resize height (default: 672) (default 672)
+        Resize height (default: 672) (default 672)
     -help
         Show help
-    -images_path string
-        Path to the file that contains a list of image file paths
-    -max_pixels int
-        Max pixels for source image. The source image will be resized if it is larger than configured max pixels (default: 2000000) (default 2000000)
+    -image string
+        Path to the image to process
     -mode string
-        'fit' or 'tile'. 'fit' will resize the image to fit the given width and height. 'tile' will resize the image to fit the given max pixels then process the image in tiles defined by width and height. (default: fit) (default "fit")
+        'fit' or 'tile'. 'fit' will resize the image to fit the given width and height. 'tile' will resize the image to fit "crop" x "crop" then process the image in 4 tiles with max width and height of "crop". (default "tile")
     -out string
         Path to save the tiled images (default "out")
     -save
         Save cropped images (default: false). For debugging purposes. Images that are saved are not automatically deleted by image-tagger.
-    -summary_model string
-        Model to use for summary (default: mistral:7b) (default "mistral:7b")
     -tags_path string
-        Path to the tags file
+        Path to the tags file (optional)
     -vision_model string
         Model to use for vision (default: llava:13b) (default "llava:13b")
     -width int
-        Crop or resize width (default: 672) (default 672)
+        Resize width (default: 672)
 
 ## Building the Project
 
 To build the project, ensure you have Go installed on your system, then run:
 
 ```bash
-cd cmd/taglist
+cd cmd/tag
 go build
 ```
 
@@ -74,7 +72,7 @@ After building, you can run the project using:
 
 ```bash
 OLLAMA_HOST="http://localhost:11434"
-./taglist [options]
+./tag [options]
 ```
 
 ## Debugging the Project
@@ -83,7 +81,7 @@ For debugging purposes, you can enable debug logging:
 
 ```bash
 OLLAMA_HOST="http://localhost:11434"
-./taglist [options] -debug -save
+./tag [options] -debug -save
 ```
 
 A launch config for debugging is available in the .vscode folder.
@@ -115,13 +113,13 @@ find . -type f -exec realpath {} \; > file_list.txt
 Merge JSON files in a directory:
 
 ```
-./scripts/merge_json.sh ./images
+./test/merge_json.sh ./images
 ```
 
 Extract tags from the merged JSON file:
 
 ```
-./scripts/extract_tags.sh ./images
+./test/extract_tags.sh ./images
 ```
 
 ## Ollama Docs

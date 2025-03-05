@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +22,6 @@ const (
 )
 
 type Options struct {
-	MaxCrops    int
 	CropSize    int
 	SaveCropped bool
 	ImagePath   string
@@ -53,15 +51,12 @@ func MakeImageTiles(options Options, img image.Image) [][]byte {
 	}
 
 	// tile mode
-	maxSize := int(float64(options.CropSize) * math.Floor(math.Sqrt(float64(options.MaxCrops))) * 1.5)
+	maxSize := options.CropSize * 2
 	slog.Debug("Resizing image", "from", fmt.Sprintf("%d x %d", imgWidth, imgHeight), "to", fmt.Sprintf("%d x %d", maxSize, maxSize))
 	img = imaging.Fit(img, maxSize, maxSize, imaging.Lanczos)
 	croppedImages := cropImage(img, options.Width, options.Height)
 
-	// always include the resized full image as the first image
-	croppedImages = append([]image.Image{resizedImage}, croppedImages...)
-
-	var imageData [][]byte = make([][]byte, len(croppedImages)+1)
+	var imageData [][]byte = make([][]byte, len(croppedImages))
 	// Save or process the cropped images
 	for i, cropped := range croppedImages {
 		if options.SaveCropped {
@@ -91,11 +86,9 @@ func cropImage(img image.Image, cropWidth, cropHeight int) []image.Image {
 		return []image.Image{img}
 	}
 
-	heightStep := int(float64(cropHeight) * 0.5)
-	widthStep := int(float64(cropWidth) * 0.5)
 	var croppedImages []image.Image
-	for y := 0; y < imgHeight-heightStep; y += heightStep {
-		for x := 0; x < imgWidth-widthStep; x += widthStep {
+	for y := 0; y < imgHeight; y += cropHeight {
+		for x := 0; x < imgWidth; x += cropWidth {
 			// Ensure the cropping does not go out of bounds
 			cropRect := image.Rect(x, y, min(x+cropWidth, imgWidth), min(y+cropHeight, imgHeight))
 			cropped := img.(interface {

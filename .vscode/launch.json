@@ -9,7 +9,7 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "${workspaceFolder}/cmd/taglist/main.go",
+      "program": "${workspaceFolder}/cmd/tag/main.go",
       "args": ["-image", "${workspaceFolder}/test/pexels-mikebirdy-244818.jpg", "-tags_path", "${workspaceFolder}/test/tags.json", "-out", "${workspaceFolder}/test/out", "-mode", "fit", "-debug", "-save"],
       "env": {
         "OLLAMA_HOST": "http://localhost:11434"
@@ -20,8 +20,19 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "${workspaceFolder}/cmd/taglist/main.go",
-      "args": ["-image", "${workspaceFolder}/test/pexels-mikebirdy-244818.jpg", "-tags_path", "${workspaceFolder}/test/tags.json", "-out", "${workspaceFolder}/test/out", "-mode", "tile", "-max_crops", "2", "-debug", "-save"],
+      "program": "${workspaceFolder}/cmd/tag/main.go",
+      "args": ["-image", "${workspaceFolder}/test/pexels-mikebirdy-244818.jpg", "-tags_path", "${workspaceFolder}/test/tags.json", "-out", "${workspaceFolder}/test/out", "-mode", "tile", "-debug", "-save"],
+      "env": {
+        "OLLAMA_HOST": "http://localhost:11434"
+      }
+    },
+    {
+      "name": "debug tile mode no tags file",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/tag/main.go",
+      "args": ["-image", "${workspaceFolder}/test/pexels-mikebirdy-244818.jpg", "-out", "${workspaceFolder}/test/out", "-mode", "tile", "-debug", "-save"],
       "env": {
         "OLLAMA_HOST": "http://localhost:11434"
       }
